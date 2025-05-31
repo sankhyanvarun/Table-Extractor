@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced PDF Table of Contents Extractor</title>
+    <link href="https://unpkg.com/tabulator-tables@5.4.4/dist/css/tabulator.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4361ee;
+            --secondary: #3f37c9;
+            --light: #f8f9fa;
+            --dark: #212529;
+            --success: #4cc9f0;
+            --danger: #e63946;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            line-height: 1.6; 
+            color: var(--dark); 
+            background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
+            min-height: 100vh; 
+            padding: 20px; 
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        header { 
+            text-align: center; 
+            padding: 30px 20px; 
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            color: white;
+        }
+        h1 { 
+            margin-bottom: 10px; 
+            font-size: 2.5rem; 
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .subtitle { 
+            font-size: 1.1rem; 
+            opacity: 0.9;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .main-content { 
+            display: flex; 
+            flex-wrap: wrap; 
+            gap: 20px; 
+            padding: 20px;
+        }
+        .panel { 
+            flex: 1; 
+            min-width: 300px; 
+            background: white; 
+            border-radius: 10px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            overflow: hidden;
+            border: 1px solid #eaeaea;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-header { 
+            background: var(--primary);
+            color: white; 
+            padding: 15px 20px; 
+            font-weight: 600; 
+            font-size: 1.2rem;
+        }
+        .panel-body { 
+            padding: 20px; 
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .upload-area { 
+            border: 3px dashed #cbd5e0; 
+            border-radius: 10px; 
+            padding: 30px; 
+            text-align: center; 
+            transition: all 0.3s; 
+            background: #f7fafc; 
+            cursor: pointer;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .upload-area:hover, .upload-area.drag-over { 
+            border-color: var(--primary); 
+            background: #edf2f7; 
+        }
+        .upload-icon { 
+            font-size: 64px; 
+            color: var(--primary); 
+            margin-bottom: 20px;
+            transition: transform 0.3s;
+        }
+        .upload-area:hover .upload-icon {
+            transform: scale(1.1);
+        }
+        #pdfViewer { 
+            width: 100%; 
+            height: 400px; 
+            overflow: auto; 
+            background: #edf2f7; 
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        #pdfCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        #tocTable { 
+            width: 100%; 
+            height: 400px;
+        }
+        .button-group { 
+            display: flex; 
+            gap: 10px; 
+            justify-content: center; 
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .btn { 
+            padding: 12px 25px; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: all 0.3s; 
+            display: inline-flex; 
+            align-items: center; 
+            gap: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .btn-primary { 
+            background: var(--primary); 
+            color: white; 
+        }
+        .btn-primary:hover { 
+            background: var(--secondary); 
+        }
+        .btn-success { 
+            background: var(--success); 
+            color: white; 
+        }
+        .btn-success:hover { 
+            background: #3a86ff; 
+        }
+        .btn-danger { 
+            background: var(--danger); 
+            color: white; 
+        }
+        .btn-danger:hover { 
+            background: #d90429; 
+        }
+        .btn:disabled { 
+            background: #cbd5e0; 
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .page-controls, .zoom-controls { 
+            display: flex; 
+            gap: 10px;
+            align-items: center;
+        }
+        .zoom-controls .btn, .page-controls .btn {
+            padding: 8px 15px;
+        }
+        .control-label {
+            background: #e2e8f0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .table-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .status-message {
+            padding: 12px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: center;
+            font-weight: 500;
+        }
+        .status-processing {
+            background: #fffbeb;
+            color: #d97706;
+            border: 1px solid #fcd34d;
+        }
+        .status-success {
+            background: #f0fdf4;
+            color: #15803d;
+            border: 1px solid #86efac;
+        }
+        .status-error {
+            background: #fef2f2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+        }
+        footer { 
+            text-align: center; 
+            padding: 20px; 
+            color: #718096;
+            border-top: 1px solid #e2e8f0;
+            background: #f7fafc;
+            font-size: 0.9rem;
+        }
+        .editor-tools {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        @media (max-width: 768px) { 
+            .main-content { flex-direction: column; } 
+            .panel { min-width: 100%; } 
+            .button-group {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PDF Table of Contents Extractor</h1>
+            <p class="subtitle">Upload a PDF, extract its Table of Contents, edit the results, and export as CSV</p>
+        </header>
+        
+        <div class="main-content">
+            <div class="panel">
+                <div class="panel-header">Upload & Extract</div>
+                <div class="panel-body">
+                    <div id="uploadArea" class="upload-area">
+                        <div class="upload-icon">📄</div>
+                        <h3>Drag & Drop your PDF here</h3>
+                        <p>or click to browse files</p>
+                        <input type="file" id="pdfInput" accept=".pdf" style="display: none;">
+                    </div>
+                    
+                    <div id="status" class="status-message"></div>
+                    
+                    <div class="button-group">
+                        <button id="extractBtn" class="btn btn-primary" disabled>
+                            <i>🔍</i> Extract Table of Contents
+                        </button>
+                        <button id="downloadBtn" class="btn btn-success" disabled>
+                            <i>💾</i> Download CSV
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header">PDF Viewer</div>
+                <div class="panel-body">
+                    <div class="controls">
+                        <div class="page-controls">
+                            <button id="prevPageBtn" class="btn btn-primary" disabled>
+                                &lt; Prev
+                            </button>
+                            <div class="control-label">
+                                Page: <span id="currentPage">1</span>/<span id="totalPages">1</span>
+                            </div>
+                            <button id="nextPageBtn" class="btn btn-primary" disabled>
+                                Next &gt;
+                            </button>
+                        </div>
+                        
+                        <div class="zoom-controls">
+                            <button id="zoomOutBtn" class="btn btn-primary" disabled>
+                                ➖ Zoom Out
+                            </button>
+                            <div class="control-label">
+                                Zoom: <span id="zoomLevel">100</span>%
+                            </div>
+                            <button id="zoomInBtn" class="btn btn-primary" disabled>
+                                ➕ Zoom In
+                            </button>
+                            <button id="resetZoomBtn" class="btn btn-primary" disabled>
+                                ⟳ Reset
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="pdfViewer">
+                        <canvas id="pdfCanvas"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header">Table of Contents Editor</div>
+                <div class="panel-body">
+                    <div class="table-controls">
+                        <button id="addRowBtn" class="btn btn-primary">
+                            + Add Row
+                        </button>
+                        <button id="removeRowBtn" class="btn btn-danger">
+                            - Remove Row
+                        </button>
+                        <button id="moveUpBtn" class="btn btn-primary">
+                            ↑ Move Up
+                        </button>
+                        <button id="moveDownBtn" class="btn btn-primary">
+                            ↓ Move Down
+                        </button>
+                    </div>
+                    
+                    <div id="tocTable"></div>
+                    
+                    <div class="editor-tools">
+                        <div>
+                            <label for="fontSize">Font Size:</label>
+                            <select id="fontSize" class="btn">
+                                <option value="12">Small</option>
+                                <option value="14" selected>Medium</option>
+                                <option value="16">Large</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>PDF ToC Extractor Tool | Advanced PDF processing with text and OCR capabilities</p>
+        </footer>
+    </div>
+
+    <script src="https://unpkg.com/tabulator-tables@5.4.4/dist/js/tabulator.min.js"></script>
+    <script src="https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.min.js"></script>
+    <script>
+        // Set up PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.worker.min.js';
+
+        // DOM Elements
+        const uploadArea = document.getElementById('uploadArea');
+        const pdfInput = document.getElementById('pdfInput');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const extractBtn = document.getElementById('extractBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const prevPageBtn = document.getElementById('prevPageBtn');
+        const nextPageBtn = document.getElementById('nextPageBtn');
+        const zoomInBtn = document.getElementById('zoomInBtn');
+        const zoomOutBtn = document.getElementById('zoomOutBtn');
+        const resetZoomBtn = document.getElementById('resetZoomBtn');
+        const currentPageEl = document.getElementById('currentPage');
+        const totalPagesEl = document.getElementById('totalPages');
+        const zoomLevelEl = document.getElementById('zoomLevel');
+        const statusEl = document.getElementById('status');
+        const addRowBtn = document.getElementById('addRowBtn');
+        const removeRowBtn = document.getElementById('removeRowBtn');
+        const moveUpBtn = document.getElementById('moveUpBtn');
+        const moveDownBtn = document.getElementById('moveDownBtn');
+        const fontSizeSelect = document.getElementById('fontSize');
+
+        // State variables
+        let pdfDoc = null;
+        let currentPage = 1;
+        let totalPages = 1;
+        let zoomLevel = 1;
+        let pdfFile = null;
+        let ctx = pdfCanvas.getContext('2d');
+
+        // Initialize Tabulator table
+        const table = new Tabulator("#tocTable", {
+            layout: "fitColumns",
+            columns: [
+                {
+                    title: "Chapter Name", 
+                    field: "chapter", 
+                    editor: "input", 
+                    width: "60%",
+                    headerFilter: "input",
+                    headerTooltip: "Click to edit chapter names"
+                },
+                {
+                    title: "Page Number", 
+                    field: "page", 
+                    editor: "number", 
+                    width: "40%",
+                    headerFilter: "input",
+                    headerTooltip: "Click to edit page numbers",
+                    validator: ["required", "integer", "min:1"]
+                }
+            ],
+            data: [],
+            rowHeight: 40,
+            movableRows: true,
+            tooltips: true,
+            addRowPos: "bottom",
+            history: true,
+            layoutColumnsOnNewData: true,
+            cellEdited: function(cell) {
+                updateStatus("Changes made. Remember to save!", "status-processing");
+            }
+        });
+
+        // Event listeners
+        uploadArea.addEventListener('click', () => pdfInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            
+            if (e.dataTransfer.files.length) {
+                pdfInput.files = e.dataTransfer.files;
+                handleFileUpload(e.dataTransfer.files[0]);
+            }
+        });
+        
+        pdfInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleFileUpload(e.target.files[0]);
+            }
+        });
+        
+        extractBtn.addEventListener('click', extractTableOfContents);
+        downloadBtn.addEventListener('click', downloadCSV);
+        prevPageBtn.addEventListener('click', () => navigatePage(-1));
+        nextPageBtn.addEventListener('click', () => navigatePage(1));
+        zoomInBtn.addEventListener('click', () => adjustZoom(0.2));
+        zoomOutBtn.addEventListener('click', () => adjustZoom(-0.2));
+        resetZoomBtn.addEventListener('click', () => resetZoom());
+        addRowBtn.addEventListener('click', () => table.addRow({chapter: "", page: ""}, true));
+        removeRowBtn.addEventListener('click', removeSelectedRow);
+        moveUpBtn.addEventListener('click', () => moveRow(-1));
+        moveDownBtn.addEventListener('click', () => moveRow(1));
+        fontSizeSelect.addEventListener('change', updateFontSize);
+
+        // Handle file upload
+        function handleFileUpload(file) {
+            if (file.type !== 'application/pdf') {
+                updateStatus("Please upload a PDF file", "status-error");
+                return;
+            }
+            
+            pdfFile = file;
+            const fileReader = new FileReader();
+            
+            fileReader.onload = function() {
+                const typedarray = new Uint8Array(this.result);
+                
+                // Load the PDF
+                pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+                    pdfDoc = pdf;
+                    totalPages = pdf.numPages;
+                    totalPagesEl.textContent = totalPages;
+                    currentPage = 1;
+                    currentPageEl.textContent = currentPage;
+                    
+                    // Enable controls
+                    extractBtn.disabled = false;
+                    prevPageBtn.disabled = false;
+                    nextPageBtn.disabled = false;
+                    zoomInBtn.disabled = false;
+                    zoomOutBtn.disabled = false;
+                    resetZoomBtn.disabled = false;
+                    
+                    // Update UI
+                    uploadArea.innerHTML = `
+                        <div class="upload-icon">✅</div>
+                        <h3>${file.name}</h3>
+                        <p>${totalPages} pages | Ready to extract</p>
+                    `;
+                    
+                    updateStatus("PDF loaded successfully. Click 'Extract' to process", "status-success");
+                    renderPage(currentPage);
+                }).catch(error => {
+                    console.error('Error loading PDF:', error);
+                    updateStatus("Error loading PDF. Please try another file.", "status-error");
+                });
+            };
+            
+            fileReader.readAsArrayBuffer(file);
+        }
+
+        // Render PDF page
+        function renderPage(pageNum) {
+            // Clear canvas
+            ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+            
+            pdfDoc.getPage(pageNum).then(page => {
+                const viewport = page.getViewport({ scale: zoomLevel });
+                
+                // Prepare canvas for rendering
+                pdfCanvas.height = viewport.height;
+                pdfCanvas.width = viewport.width;
+                
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+                
+                page.render(renderContext).promise.then(() => {
+                    updateStatus(`Rendered page ${pageNum} of ${totalPages}`, "status-processing");
+                });
+            });
+        }
+
+        // Navigate between pages
+        function navigatePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage < 1 || newPage > totalPages) return;
+            
+            currentPage = newPage;
+            currentPageEl.textContent = currentPage;
+            renderPage(currentPage);
+        }
+
+        // Adjust zoom level
+        function adjustZoom(delta) {
+            zoomLevel = Math.max(0.5, Math.min(zoomLevel + delta, 3));
+            zoomLevelEl.textContent = Math.round(zoomLevel * 100);
+            renderPage(currentPage);
+        }
+
+        // Reset zoom to 100%
+        function resetZoom() {
+            zoomLevel = 1;
+            zoomLevelEl.textContent = Math.round(zoomLevel * 100);
+            renderPage(currentPage);
+        }
+
+        // Extract table of contents
+        function extractTableOfContents() {
+            updateStatus("Extracting table of contents...", "status-processing");
+            extractBtn.disabled = true;
+            extractBtn.innerHTML = '<i>⏳</i> Processing...';
+            
+            const formData = new FormData();
+            formData.append('file', pdfFile);
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Server error');
+                return response.json();
+            })
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                
+                if (data.toc && data.toc.length > 0) {
+                    table.replaceData(data.toc);
+                    downloadBtn.disabled = false;
+                    updateStatus("Table of contents extracted successfully!", "status-success");
+                    extractBtn.innerHTML = '<i>✅</i> Extraction Complete';
+                } else {
+                    updateStatus("No table of contents found in the document", "status-error");
+                    extractBtn.innerHTML = '<i>🔍</i> Extract Table of Contents';
+                }
+            })
+            .catch(error => {
+                console.error('Extraction error:', error);
+                updateStatus(`Error: ${error.message}`, "status-error");
+                extractBtn.innerHTML = '<i>🔍</i> Extract Table of Contents';
+            })
+            .finally(() => {
+                setTimeout(() => {
+                    extractBtn.disabled = false;
+                    extractBtn.innerHTML = '<i>🔍</i> Extract Table of Contents';
+                }, 2000);
+            });
+        }
+
+        // Download CSV
+        function downloadCSV() {
+            const data = table.getData();
+            if (data.length === 0) {
+                updateStatus('No data to export', "status-error");
+                return;
+            }
+            
+            downloadBtn.disabled = true;
+            downloadBtn.innerHTML = '<i>⏳</i> Preparing...';
+            
+            fetch('/download', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({toc: data})
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to generate CSV');
+                return response.blob();
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'table_of_contents.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                updateStatus("CSV file downloaded successfully", "status-success");
+                downloadBtn.innerHTML = '<i>✅</i> Downloaded!';
+            })
+            .catch(error => {
+                console.error('Download error:', error);
+                updateStatus(`Error: ${error.message}`, "status-error");
+                downloadBtn.innerHTML = '<i>💾</i> Download CSV';
+            })
+            .finally(() => {
+                setTimeout(() => {
+                    downloadBtn.disabled = false;
+                    downloadBtn.innerHTML = '<i>💾</i> Download CSV';
+                }, 2000);
+            });
+        }
+
+        // Update status message
+        function updateStatus(message, className = "") {
+            statusEl.textContent = message;
+            statusEl.className = `status-message ${className}`;
+        }
+
+        // Remove selected row
+        function removeSelectedRow() {
+            const selectedRows = table.getSelectedRows();
+            if (selectedRows.length === 0) {
+                updateStatus("Please select a row to delete", "status-error");
+                return;
+            }
+            
+            selectedRows.forEach(row => {
+                row.delete();
+            });
+            
+            updateStatus("Row(s) removed. Remember to save!", "status-processing");
+        }
+
+        // Move selected row up or down
+        function moveRow(direction) {
+            const selectedRows = table.getSelectedRows();
+            if (selectedRows.length === 0) {
+                updateStatus("Please select a row to move", "status-error");
+                return;
+            }
+            
+            selectedRows.forEach(row => {
+                const index = row.getPosition();
+                const newIndex = index + direction;
+                
+                if (newIndex >= 0 && newIndex < table.getDataCount()) {
+                    table.moveRow(index, newIndex, true);
+                    table.selectRow(newIndex);
+                }
+            });
+            
+            updateStatus("Row position changed. Remember to save!", "status-processing");
+        }
+
+        // Update table font size
+        function updateFontSize() {
+            const size = fontSizeSelect.value;
+            document.querySelectorAll('#tocTable .tabulator-cell').forEach(cell => {
+                cell.style.fontSize = `${size}px`;
+            });
+        }
+
+        // Initialize with medium font size
+        updateFontSize();
+    </script>
+</body>
+</html>

@@ -1,48 +1,37 @@
 import os
 import re
 import csv
-import uuid
 import tempfile
 import PyPDF2
 from flask import Flask, render_template, request, jsonify, send_file
 from pdf2image import convert_from_path
 import pytesseract
-import subprocess
 import shutil
-import io
-import time
 
 app = Flask(__name__)
 
-# Configure paths (update these for your system)
-POPPLER_PATH = r'bin'  # Example for Windows
-# TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Example for Windows
-TESSERACT_CMD = r'tesseract-ocr-w64-setup-5.5.0.20241111.exe'  # Windows example
+# Configure paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+POPPLER_PATH = os.path.join(BASE_DIR, 'poppler', 'bin')
+TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # Set Tesseract command
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 def get_poppler_path():
-    """Get poppler path from environment or use configured path."""
-    # Check if poppler exists in the configured path
-    if POPPLER_PATH and os.path.exists(os.path.join(POPPLER_PATH, 'pdftoppm')):
-        return POPPLER_PATH
-    # Check common installation paths
-    common_paths = [
-        r'C:\Program Files\poppler-24.02.0\Library\bin',
-        r'C:\Program Files\poppler-23.11.0\Library\bin',
-        r'C:\Program Files\poppler\bin',
-        '/usr/local/bin',
-        '/usr/bin',
-        '/opt/homebrew/bin'
-    ]
-    for path in common_paths:
-        if os.path.exists(os.path.join(path, 'pdftoppm')):
-            return path
-    return None
+    """Get poppler path from the project directory"""
+    return POPPLER_PATH
 
-def extract_text_from_pdf(pdf_path):
-    """Extract text from PDF using PyPDF2 and fallback to OCR for non-text pages."""
+def convert_hindi_digits(text):
+    """Convert Hindi (Devanagari) digits to Arabic numerals"""
+    hindi_digits = {
+        '०': '0', '१': '1', '२': '2', '३': '3', '४': '4',
+        '५': '5', '६': '6', '७': '7', '८': '8', '९': '9'
+    }
+    return ''.join(hindi_digits.get(char, char) for char in text)
+
+def extract_text_from_pdf(pdf_path, lang='eng'):
+    """Extract text from PDF using PyPDF2 with OCR fallback"""
     text = ""
     poppler_path = get_poppler_path()
     
@@ -59,58 +48,104 @@ def extract_text_from_pdf(pdf_path):
                         pdf_path, 
                         first_page=page_num+1, 
                         last_page=page_num+1,
-                        poppler_path=poppler_path
+                        poppler_path=poppler_path,
+                        dpi=400,  # Higher DPI for better Hindi OCR
+                        grayscale=True  # Better for text recognition
                     )
                     if images:
-                        page_text = pytesseract.image_to_string(images[0])
+                        # Use specified language for OCR
+                        config = '--psm 6'  # Assume a single uniform block of text
+                        page_text = pytesseract.image_to_string(images[0], lang=lang, config=config)
                 except Exception as e:
                     print(f"OCR failed on page {page_num+1}: {str(e)}")
                     page_text = ""  # Use empty string if OCR fails
             text += page_text + "\n"
     return text
 
-def parse_toc(text):
-    """Parse the table of contents from extracted text with enhanced patterns."""
+def is_valid_page_number(page_str):
+    """Check if string contains only digits (Arabic or Hindi)"""
+    if not page_str:
+        return False
+    # Check for Arabic digits (0-9) or Hindi digits (०-९)
+    return all(char in '0123456789०१२३४५६७८९' for char in page_str)
+
+def parse_toc(text, is_hindi=False):
+    """Parse the table of contents from extracted text"""
     entries = []
-    # Enhanced patterns to match TOC lines
-    patterns = [
-        # Pattern for: Chapter 1: Title...............1
-        r'^(.*?(?:chapter|part|section|appendix|preface|foreword|introduction|references|index|acknowledgements?|bibliography)\b[\s\S]*?)[\s\.\-]*(\d+)\s*$',
-        # Pattern for: 1. Title.......................1
-        r'^\s*(\d+\..*?)[\s\.\-]+(\d+)\s*$',
-        # Pattern for: Title.......................1
-        r'^(.*?)[\s\.\-]+(\d+)\s*$',
-        # Pattern for: Title - 1
-        r'^(.*?)[\s\-\_]+(\d+)\s*$'
+    
+    # Common patterns for both languages
+    common_patterns = [
+        r'^(.*?)[\s\.\-]+(\d+)\s*$',          # Title........123
+        r'^(.*?)[\s\-\_]+(\d+)\s*$',           # Title - 123
+        r'^\s*(\d+\..*?)[\s\.\-]+(\d+)\s*$',  # 1. Title...123
     ]
     
-    # Skip lines containing these keywords (case-insensitive)
-    skip_keywords = [
-        "table of contents", "contents", "toc", "page", "pages", 
-        "chapter", "section", "part", "continued"
+    # Hindi-specific patterns - improved for Hindi TOC structures
+    hindi_patterns = [
+        # Hindi numbering: १. शीर्षक १२३
+        r'^\s*([०१२३४५६७८९]+\.\s+.*?)[\s\.\-]*([०१२३४५६७८९\d]+)\s*$',
+        # Hindi with separator: शीर्षक - १२३
+        r'^(.*?)[\s\-\—]+([०१२३४५६७८९\d]+)\s*$',
+        # Hindi with dots: शीर्षक........१२३
+        r'^(.*?)[\s\.]+([०१२३४५६७८९\d]+)\s*$',
+        # Chapter headings: अध्याय १: शीर्षक १२३
+        r'^(.*?(?:अध्याय|खंड|परिशिष्ट|प्रस्तावना|भाग|अनुभाग|प्रकरण)\s*[०१२३४५६७८९]*[\.\:\-]?\s*.*?)[\s\.\-]*([०१२३४५६७८९\d]+)\s*$',
+        # Generic Hindi: any text followed by Hindi/Arabic digits at the end
+        r'^(.*?)\s+([०१२३४५६७८९\d]+)$'
     ]
+    
+    patterns = hindi_patterns if is_hindi else common_patterns
+    
+    # Skip terms
+    skip_terms_eng = ["table of contents", "contents", "page", "chap"]
+    skip_terms_hindi = ["विषय सूची", "अनुक्रमणिका", "सामग्री", "पृष्ठ", "अध्याय"]
+    skip_terms = skip_terms_hindi if is_hindi else skip_terms_eng
     
     for line in text.split('\n'):
         line = line.strip()
-        if not line:
+        if not line or len(line) < 5:
             continue
         
-        # Skip lines that are too short or contain skip keywords
-        if len(line) < 5 or any(keyword in line.lower() for keyword in skip_keywords):
+        # Skip common TOC headers
+        if any(term in line.lower() for term in skip_terms):
             continue
-        
+            
         for pattern in patterns:
-            match = re.match(pattern, line, re.IGNORECASE)
+            match = re.match(pattern, line, re.IGNORECASE | re.UNICODE)
             if match:
-                chapter = match.group(1).strip()
-                page = match.group(2).strip()
-                # Validate page number is a positive integer
-                if page.isdigit() and int(page) > 0:
+                # Handle different group patterns
+                if len(match.groups()) == 2:
+                    chapter = match.group(1).strip()
+                    page = match.group(2).strip()
+                elif len(match.groups()) == 3:
+                    # For patterns with 3 groups (like numbered headings)
+                    chapter = f"{match.group(1)} {match.group(2)}".strip()
+                    page = match.group(3).strip()
+                else:
+                    continue
+                
+                # Validate page number (Arabic or Hindi digits)
+                if is_valid_page_number(page):
+                    # Convert Hindi digits to Arabic numerals
+                    page = convert_hindi_digits(page)
                     entries.append({
                         "chapter": chapter,
                         "page": page
                     })
-                    break  # Break after first match
+                    break
+                else:
+                    # Fallback: Look for digits at the end of the line
+                    digit_match = re.search(r'(\d+|[०१२३४५६७८९]+)$', line)
+                    if digit_match:
+                        page = digit_match.group(1)
+                        if is_valid_page_number(page):
+                            chapter = line[:digit_match.start()].strip()
+                            page = convert_hindi_digits(page)
+                            entries.append({
+                                "chapter": chapter,
+                                "page": page
+                            })
+                            break
     
     return entries
 
@@ -122,20 +157,31 @@ def index():
 def upload_file():
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
+        
     file = request.files['file']
+    language = request.form.get('language', 'eng')  # Default to English
+    
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     
-    # Create a temporary directory to store the file
+    # Create a temporary directory
     temp_dir = tempfile.mkdtemp()
     pdf_path = os.path.join(temp_dir, file.filename)
     file.save(pdf_path)
     
     try:
+        # Determine if we need Hindi-specific parsing
+        is_hindi = (language == 'hin' or language == 'both')
+        # For OCR, we can pass the language code. If both, we pass 'eng+hin'
+        ocr_lang = language
+        if language == 'both':
+            ocr_lang = 'eng+hin'
+        
         # Extract text from PDF
-        text = extract_text_from_pdf(pdf_path)
+        text = extract_text_from_pdf(pdf_path, lang=ocr_lang)
+        
         # Parse TOC from text
-        toc = parse_toc(text)
+        toc = parse_toc(text, is_hindi=is_hindi)
         return jsonify({
             'status': 'success',
             'toc': toc,
@@ -144,44 +190,7 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Clean up: remove the temporary directory and its contents
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-@app.route('/preview', methods=['POST'])
-def preview_pdf():
-    """Generate a preview of the first page of the PDF."""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    
-    # Save to temp file
-    temp_dir = tempfile.mkdtemp()
-    pdf_path = os.path.join(temp_dir, file.filename)
-    file.save(pdf_path)
-    
-    try:
-        poppler_path = get_poppler_path()
-        images = convert_from_path(
-            pdf_path, 
-            first_page=1, 
-            last_page=1,
-            poppler_path=poppler_path
-        )
-        
-        if images:
-            # Convert image to bytes
-            img_byte_arr = io.BytesIO()
-            images[0].save(img_byte_arr, format='JPEG')
-            img_byte_arr = img_byte_arr.getvalue()
-            return img_byte_arr, 200, {'Content-Type': 'image/jpeg'}
-        
-        return jsonify({'error': 'Could not generate preview'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
+        # Clean up
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 @app.route('/download', methods=['POST'])
@@ -195,7 +204,7 @@ def download_csv():
     csv_path = os.path.join(temp_dir, 'toc.csv')
     
     try:
-        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:  # UTF-8 with BOM for Excel
             writer = csv.writer(csvfile)
             writer.writerow(['Chapter Name', 'Page Number'])
             for item in data['toc']:
@@ -205,15 +214,15 @@ def download_csv():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Clean up the temporary directory after sending the file
+        # Clean up after sending the file
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 if __name__ == '__main__':
-    # Check Poppler installation
+    # Verify poppler installation
     poppler_path = get_poppler_path()
-    if poppler_path:
+    if poppler_path and os.path.exists(os.path.join(poppler_path, 'pdftoppm.exe')):
         print(f"Poppler found at: {poppler_path}")
     else:
-        print("Warning: Poppler not found. OCR may not work.")
+        print("Warning: Poppler not found. OCR may not work properly")
     
     app.run(debug=True, port=5000)
